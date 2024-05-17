@@ -19,3 +19,5 @@ dependencies:
     - submodules/simple-knn
 variables:
   CUDA_HOME: $CONDA_PREFIX
+  CC: /usr/bin/gcc-10
+  CXX: /usr/bin/g++-10
