@@ -17,3 +17,5 @@ dependencies:
   - pip:
     - submodules/diff-gaussian-rasterization
     - submodules/simple-knn
+variables:
+  CUDA_HOME: $CONDA_PREFIX
