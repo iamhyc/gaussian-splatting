@@ -3,7 +3,9 @@
 git clone https://github.com/graphdeco-inria/gaussian-splatting --recursive
 
 # minimum dependency
-sudo apt install -y unzip aria2
+sudo apt install -y unzip aria2 g++-10 gcc-10
+sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-10 100
+sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-10 100
 
 # setup conda environment
 conda env create --file environment.yml
@@ -15,6 +17,9 @@ cd dataset && aria2c https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/da
 
 # train with demo dataset
 python3 ./train.py -s dataset/tandt/train
+
+# 
+
 ```
 
 ----
