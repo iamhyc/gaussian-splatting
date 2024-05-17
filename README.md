@@ -1,3 +1,24 @@
+# ALL-IN-ONE SETUP
+```bash
+git clone https://github.com/graphdeco-inria/gaussian-splatting --recursive
+
+# minimum dependency
+sudo apt install -y unzip aria2
+
+# setup conda environment
+conda env create --file environment.yml
+conda activate gaussian_splatting
+
+# download demo dataset
+mkdir dataset
+cd dataset && https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/datasets/input/tandt_db.zip && unzip tandt_db.zip && rm tandt_db.zip && cd ..
+
+# train with demo dataset
+python3 ./train.py -s dataset/tandt/train
+```
+
+----
+
 # 3D Gaussian Splatting for Real-Time Radiance Field Rendering
 Bernhard Kerbl*, Georgios Kopanas*, Thomas Leimkühler, George Drettakis (* indicates equal contribution)<br>
 | [Webpage](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/) | [Full Paper](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/3d_gaussian_splatting_high.pdf) | [Video](https://youtu.be/T_kXY43VZnk) | [Other GRAPHDECO Publications](http://www-sop.inria.fr/reves/publis/gdindex.php) | [FUNGRAPH project page](https://fungraph.inria.fr) |<br>
