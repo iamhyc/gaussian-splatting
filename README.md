@@ -1,6 +1,7 @@
 # ALL-IN-ONE SETUP
 ```bash
-git clone https://github.com/graphdeco-inria/gaussian-splatting --recursive
+git clone https://github.com/iamhyc/gaussian-splatting --recursive
+cd gaussian-splatting
 
 # minimum dependency
 sudo apt install -y unzip aria2 g++-10 gcc-10
@@ -17,8 +18,6 @@ cd dataset && aria2c https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/da
 
 # train with demo dataset
 python3 ./train.py -s dataset/tandt/train
-
-# 
 
 ```
 
