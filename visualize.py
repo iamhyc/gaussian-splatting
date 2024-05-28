@@ -8,15 +8,31 @@ import tempfile
 from tqdm import tqdm
 
 DATASET = 'wei'
+MAX_DEPTH = 5
+
+def monochromize(pcd, color):
+    num_pcd = len(pcd.points)
+    colors = np.zeros((num_pcd,3))
+    colors[:] = color
+    pcd.colors = o3d.utility.Vector3dVector(colors)
+    pass
+
+def visualize_chopped_pcd(pcd, chopped_pcd, pyramid):
+    monochromize(chopped_pcd, [1,0,0])
+    pyramid_geometry = o3d.geometry.LineSet(
+        points=o3d.utility.Vector3dVector(pyramid),
+        lines=o3d.utility.Vector2iVector([[0,1],[0,2],[0,3],[0,4],[1,3],[1,4],[2,3],[2,4], [1,2],[3,4]])
+    )
+    o3d.visualization.draw_geometries([pcd, chopped_pcd, pyramid_geometry])
+    pass
 
 ## load point cloud
 print('load point cloud ...')
 PLY_PATH = 'dataset/%s/sparse/0/points3D.ply'%DATASET
 ply_pcd = o3d.io.read_point_cloud(PLY_PATH)
-num_pcd = len(ply_pcd.points)
 pcd = o3d.geometry.PointCloud()
 pcd.points = ply_pcd.points
-# pcd.colors = ply_pcd.colors
+pcd.colors = ply_pcd.colors
 
 ## load camera parameters
 print('load camera parameters ...')
@@ -56,7 +72,7 @@ with open(IMAGE_PATH) as fp:
         camera_id = text[8]
         name = text[9]
         images[idx] = {
-            'name':name,
+            'name':name.rstrip('.png'),
             'image_id':image_id, 'camera_id':camera_id,
             'quaternion': [qw,qx,qy,qz],
             'translation': [tx,ty,tz],
@@ -71,12 +87,12 @@ for image in tqdm(images, 'crop point cloud to images'):
     if output_file.exists(): continue
     # build inital pyramid
     camera = cameras[ image['camera_id'] ]
-    tx, ty = camera['aspect_w'], camera['aspect_h']
+    tw, th = camera['aspect_w'], camera['aspect_h']
     pyramid = np.array([
         [0,0,0],
-        [tx,ty,1], [-tx,-ty,1],
-        [-tx,ty,1], [tx,-ty,1],
-    ]) * 10
+        [1,tw,th], [1,-tw,-th],
+        [1,-tw,th], [1,tw,-th],
+    ]) * MAX_DEPTH
     # rotate and translate the pyramid
     pyramid = R.from_quat(image['quaternion']).apply(pyramid)
     pyramid += np.array(image['translation'])
@@ -85,9 +101,9 @@ for image in tqdm(images, 'crop point cloud to images'):
         json.dump({
             'bounding_polygon': pyramid.tolist(),
             'class_name': 'SelectionPolygonVolume',
-            'axis_min':min(pyramid[:,-1]),
-            'axis_max':max(pyramid[:,-1]),
-            'orthogonal_axis' : 'Y',
+            'axis_min':min(pyramid[:,0]),
+            'axis_max':max(pyramid[:,0]),
+            'orthogonal_axis' : 'X',
             'version_major': 1,
             'version_minor': 0,
         }, fp)
@@ -96,14 +112,13 @@ for image in tqdm(images, 'crop point cloud to images'):
         vol = o3d.visualization.read_selection_polygon_volume(fp.name)
         chopped_pcd = vol.crop_point_cloud(pcd)
         if len(chopped_pcd.points)>0:
-            o3d.io.write_point_cloud(output_file.as_posix(), chopped_pcd)
+            o3d.io.write_point_cloud(output_file.as_posix(), chopped_pcd, compressed=True)
             image['pcd'] = output_file
+        else:
+            print(f'{output_file.name}: point cloud missing.')
+        # visualize_chopped_pcd(pcd, chopped_pcd, pyramid)
     pass
 
-# colors = np.zeros((num_pcd,3))
-# for i in range(num_pcd):
-#     colors[i]=[1,0,0]
-# pcd.colors = o3d.utility.Vector3dVector(colors)
 
 ## visualize point cloud
 o3d.visualization.draw_geometries([pcd])
