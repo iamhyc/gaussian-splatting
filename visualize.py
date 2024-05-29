@@ -18,7 +18,7 @@ def monochromize(pcd, color):
     pass
 
 def visualize_chopped_pcd(pcd, chopped_pcd, pyramid):
-    monochromize(chopped_pcd, [1,0,0])
+    monochromize(chopped_pcd, [0,1,0])
     pyramid_geometry = o3d.geometry.LineSet(
         points=o3d.utility.Vector3dVector(pyramid),
         lines=o3d.utility.Vector2iVector([[0,1],[0,2],[0,3],[0,4],[1,3],[1,4],[2,3],[2,4], [1,2],[3,4]])
@@ -103,7 +103,7 @@ for image in tqdm(images, 'crop point cloud to images'):
             'class_name': 'SelectionPolygonVolume',
             'axis_min':min(pyramid[:,0]),
             'axis_max':max(pyramid[:,0]),
-            'orthogonal_axis' : 'X',
+            'orthogonal_axis': 'X',
             'version_major': 1,
             'version_minor': 0,
         }, fp)
@@ -111,14 +111,15 @@ for image in tqdm(images, 'crop point cloud to images'):
         #
         vol = o3d.visualization.read_selection_polygon_volume(fp.name)
         chopped_pcd = vol.crop_point_cloud(pcd)
-        if len(chopped_pcd.points)>0:
-            o3d.io.write_point_cloud(output_file.as_posix(), chopped_pcd, compressed=True)
-            image['pcd'] = output_file
-        else:
+        if len(chopped_pcd.points)==0:
             print(f'{output_file.name}: point cloud missing.')
-        # visualize_chopped_pcd(pcd, chopped_pcd, pyramid)
+            # visualize_chopped_pcd(pcd, chopped_pcd, pyramid)
+            continue
+    ## hidden point removal
+    diameter = np.linalg.norm( chopped_pcd.get_max_bound() - chopped_pcd.get_min_bound() )
+    _, pt_map = chopped_pcd.hidden_point_removal(pyramid[0], diameter*100)
+    chopped_pcd = chopped_pcd.select_by_index(pt_map)
+    # visualize_chopped_pcd(pcd, chopped_pcd, pyramid)
+    o3d.io.write_point_cloud(output_file.as_posix(), chopped_pcd)
+    image['pcd'] = output_file
     pass
-
-
-## visualize point cloud
-o3d.visualization.draw_geometries([pcd])
