@@ -125,7 +125,7 @@ for image in tqdm(images, 'crop point cloud to images'):
     ## bypass generated
     output_file = CHOP_PATH / f'{image["name"]}.ply'
     if output_file.exists(): continue
-    
+
     ## build initial pyramid
     camera = cameras[ image['camera_id'] ]
     tw, th = camera['aspect_w'], camera['aspect_h']
@@ -137,7 +137,7 @@ for image in tqdm(images, 'crop point cloud to images'):
     ## rotate and translate the pyramid
     pyramid -= np.array(image['translation'])
     pyramid = R.from_quat(image['quaternion']).inv().apply(pyramid)
-    
+
     ## crop pcd with pyramid bbox
     pyramid_mesh = o3d.geometry.TriangleMesh(
         vertices=o3d.utility.Vector3dVector(pyramid),
