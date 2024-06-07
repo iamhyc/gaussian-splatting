@@ -1,5 +1,6 @@
 name: gaussian_splatting
 channels:
+  - open3d-admin
   - pytorch
   - pytorch-test
   - conda-forge
@@ -8,10 +9,12 @@ dependencies:
   - ninja
   - cudatoolkit=11.6
   - cudatoolkit-dev=11.6
+  - open3d
   - plyfile
   - python=3.7.13
   - pip=22.3.1
   - pytorch=1.12.1
+  - scipy
   - torchaudio=0.12.1
   - torchvision=0.13.1
   - torch_tb_profiler

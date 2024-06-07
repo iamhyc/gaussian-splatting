@@ -6,13 +6,24 @@ from scipy.spatial import Delaunay
 from scipy.spatial.transform import Rotation as R
 from tqdm import tqdm
 
-ROOT_FOLDER='/home/lab525/build/dataset' #'dataset'
+from utils.partition_utils import PointCloudMark
+
+ROOT_FOLDER='dataset'
 DATASET = 'wei'
 MAX_DEPTH = 10
 
 DEBUG_VISUALIZE = ['none',
-    'camera_trajectory', 'pyramid_crop', 'hidden_removal',
+    'camera_trajectory', 'pyramid_crop', 'hidden_removal', 'bbox'
     ][0]
+
+def pt_remap(*pt_map_chain):
+    ori_map = np.copy(pt_map_chain[0])
+    for last_map in pt_map_chain[1:]:
+        ori_map = last_map[ (ori_map,) ]
+    return ori_map
+
+def get_pt_map(points: np.ndarray, hull: Delaunay):
+    return np.where(hull.find_simplex(np.asarray(points)) >= 0)[0]
 
 def monochromize(pcd, color):
     num_pcd = len(pcd.points)
@@ -123,8 +134,12 @@ CHOP_PATH = Path( f'{ROOT_FOLDER}/{DATASET}/sparse/chopped').resolve()
 CHOP_PATH.mkdir(exist_ok=True)
 for image in tqdm(images, 'crop point cloud to images'):
     ## bypass generated
-    output_file = CHOP_PATH / f'{image["name"]}.ply'
-    if output_file.exists(): continue
+    output_file = CHOP_PATH / f'{image["name"]}.npy'
+    if output_file.exists():
+        # chopped_pcd = o3d.io.read_point_cloud(output_file.as_posix())
+        # image['bbox'] = chopped_pcd.get_minimal_oriented_bounding_box()
+        image['pt_map'] = np.load(output_file)
+        continue
 
     ## build initial pyramid
     camera = cameras[ image['camera_id'] ]
@@ -147,14 +162,13 @@ for image in tqdm(images, 'crop point cloud to images'):
         ])
     )
     bbox = pyramid_mesh.get_oriented_bounding_box()
-    chopped_pcd = pcd.crop(bbox)
+    pt_map_A = get_pt_map(pcd.points, Delaunay(np.asarray(bbox.get_box_points())))
+    chopped_pcd = pcd.select_by_index(pt_map_A) #pcd.crop(bbox)
 
     ## crop pcd with convex hull
     pyramid_hull = Delaunay(pyramid)
-    pt_map = np.where(
-        pyramid_hull.find_simplex(np.asarray(chopped_pcd.points)) >= 0
-    )[0]
-    chopped_pcd = chopped_pcd.select_by_index(pt_map)
+    pt_map_B = get_pt_map(chopped_pcd.points, pyramid_hull)
+    chopped_pcd = chopped_pcd.select_by_index(pt_map_B)
     if DEBUG_VISUALIZE=='pyramid_crop': visualize_chopped_pcd(pcd, chopped_pcd, pyramid)
     if len(chopped_pcd.points)==0:
         print(f'{output_file.name}: point cloud missing.')
@@ -162,9 +176,29 @@ for image in tqdm(images, 'crop point cloud to images'):
 
     ## hidden point removal
     diameter = np.linalg.norm( chopped_pcd.get_max_bound() - chopped_pcd.get_min_bound() )
-    _, pt_map = chopped_pcd.hidden_point_removal(pyramid[0], diameter*100)
-    chopped_pcd = chopped_pcd.select_by_index(pt_map)
+    _, pt_map_C = chopped_pcd.hidden_point_removal(pyramid[0], diameter*100)
+    chopped_pcd = chopped_pcd.select_by_index(pt_map_C)
     if DEBUG_VISUALIZE=='hidden_removal': visualize_chopped_pcd(pcd, chopped_pcd, pyramid)
-    o3d.io.write_point_cloud(output_file.as_posix(), chopped_pcd)
-    image['pcd'] = output_file
+    # o3d.io.write_point_cloud(output_file.as_posix(), chopped_pcd)
+    # image['bbox'] = chopped_pcd.get_minimal_oriented_bounding_box()
+    image['pt_map'] = pt_remap(pt_map_C, pt_map_B, pt_map_A)
+    np.save(output_file, image['pt_map'])
     pass
+
+## visualize the cropped bounding boxes
+# if DEBUG_VISUALIZE=='bbox':
+#     bboxes = [image['bbox'] for image in images]
+#     for b in bboxes:
+#         b.color = np.random.random(3).tolist()
+#     coord = build_coord_geometry()
+#     o3d.visualization.draw_geometries([pcd, *bboxes, *coord])
+
+## generate pcd partition mark signature
+output_file = CHOP_PATH / '..' / '0' / 'points3D.mark'
+_points = np.asarray(pcd.points)
+marks = PointCloudMark(_points.shape[0], len(images))
+for i,img in enumerate(tqdm(images, 'mark point cloud')):
+    # marks[ (img['pt_map'],), i ] = True
+    marks.set(img['pt_map'], i)
+with open(output_file, 'wb+') as fp:
+    np.save(fp, marks.marks)
