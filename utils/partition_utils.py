@@ -1,6 +1,31 @@
 #!/usr/bin/env python3
 import numpy as np
 
+from scene.cameras import Camera
+
+class LazyLoader:
+    def __init__(self, cls, *args, **kwargs):
+        self.cls = cls
+        self.args = args
+        self.kwargs = kwargs
+        self.instance = None
+        pass
+    
+    def __getattribute__(self, name: str):
+        if name in ['cls', 'args', 'kwargs', 'instance']:
+            return super().__getattribute__(name)
+        else:
+            if not self.instance:
+                self.instance = self.cls(*self.args, **self.kwargs)
+            return getattr(self.instance, name)
+
+    def __del__(self):
+        if self.instance:
+            del self.instance
+        pass
+    
+    pass
+
 class PointCloudMark:
     def __init__(self, pcd_size: int, image_size: int):
         _length = int(np.ceil( image_size/8 ))

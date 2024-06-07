@@ -50,7 +50,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     first_iter += 1
 
     with torch.profiler.profile(
-        schedule=torch.profiler.schedule(wait=95, warmup=0, active=5, repeat=30),
+        # schedule=torch.profiler.schedule(wait=95, warmup=0, active=5, repeat=30),
         on_trace_ready=torch.profiler.tensorboard_trace_handler(args.model_path+'/gs'),
         record_shapes=True,
         profile_memory=True,
@@ -98,6 +98,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             # Loss
             gt_image = viewpoint_cam.original_image.cuda()
+            del viewpoint_cam
             Ll1 = l1_loss(image, gt_image)
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
             loss.backward()
