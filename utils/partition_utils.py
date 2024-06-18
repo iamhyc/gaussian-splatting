@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 import numpy as np
 
-from scene.cameras import Camera
-
 class LazyLoader:
     def __init__(self, cls, *args, **kwargs):
         self.cls = cls
@@ -46,8 +44,23 @@ class PointCloudMark:
         self.marks[ (pt_map,), index ] |= val
         pass
 
-    def select(self, pt_map: np.ndarray, bit: int):
+    def select(self, bit: int, reverse: bool=False):
         index, offset = (bit//8), (bit%8)
         val = 1 << offset
-        return np.where(self.marks[ (pt_map,), index ] & val != 0)
+        if reverse:
+            return (self.marks[:, index] & val == 0)
+        else:
+            return (self.marks[:, index] & val != 0)
+
+    def select_multi(self, bits: list):
+        return np.logical_or.reduce([self.select(bit) for bit in bits])
+
+    def prune(self, prune_mask: np.ndarray):
+        pruned = self.marks[prune_mask]
+        self.marks = self.marks[~prune_mask]
+        return pruned
+
+    def concat(self, marks: np.ndarray):
+        self.marks = np.concatenate([self.marks, marks], axis=0)
+
     pass

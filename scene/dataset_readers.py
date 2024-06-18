@@ -20,6 +20,7 @@ import numpy as np
 import json
 from pathlib import Path
 from plyfile import PlyData, PlyElement
+from utils.partition_utils import PointCloudMark
 from utils.sh_utils import SH2RGB
 from scene.gaussian_model import BasicPointCloud
 
@@ -110,7 +111,11 @@ def fetchPly(path):
     positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
     colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
     normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
-    return BasicPointCloud(points=positions, colors=colors, normals=normals)
+    ##
+    marks_path = Path(path).with_suffix('.mark')
+    marks = np.load(marks_path) if marks_path.exists() else None
+    marks = PointCloudMark.from_marks(marks) if marks is not None else None
+    return BasicPointCloud(points=positions, colors=colors, normals=normals, marks=marks)
 
 def storePly(path, xyz, rgb):
     # Define the dtype for the structured array
@@ -166,7 +171,8 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
         storePly(ply_path, xyz, rgb)
     try:
         pcd = fetchPly(ply_path)
-    except:
+    except Exception as e:
+        print('fetchPly:', e)
         pcd = None
 
     scene_info = SceneInfo(point_cloud=pcd,
