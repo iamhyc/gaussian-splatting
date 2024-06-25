@@ -20,6 +20,7 @@ from scene.dataset_readers import sceneLoadTypeCallbacks
 from scene.gaussian_model import GaussianModel
 from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
+from utils.partition_utils import PointCloudMark
 
 class SceneCacheManager:
     cache_dict = dict()
@@ -39,18 +40,26 @@ class SceneCacheManager:
         pop_pcd = BasicPointCloud(points=self.pcd.points[pt_mask],
                                 colors=self.pcd.colors[pt_mask],
                                 normals=self.pcd.normals[pt_mask],
-                                marks=self.pcd.marks.marks[pt_mask])
+                                marks=PointCloudMark.from_marks(
+                                    self.pcd.marks.marks[pt_mask]
+                                ))
         ## remove points from `self.pcd`
         remain_mask = np.logical_not(pt_mask)
         self.pcd = BasicPointCloud(points=self.pcd.points[remain_mask],
                                 colors=self.pcd.colors[remain_mask],
                                 normals=self.pcd.normals[remain_mask],
-                                marks=self.pcd.marks.marks[remain_mask])
+                                marks=PointCloudMark.from_marks(
+                                    self.pcd.marks.marks[remain_mask]
+                                ))
         return pop_pcd
 
     def pop_from_cache(self, index: int):
-        assert( 'marks' in self.cache_dict )
-        pt_mask = self.cache_dict['marks'].select(index)
+        if len(self.cache_dict) == 0:
+            return None
+        else:
+            assert( 'marks' in self.cache_dict )
+        ## select points from `self.cache_dict`
+        pt_mask = PointCloudMark.from_marks(self.cache_dict['marks']).select(index)
         if len(pt_mask) == 0:
             return None
         ## select points from `self.cache_dict`
