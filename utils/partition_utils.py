@@ -13,12 +13,17 @@ class LazyLoader:
         if name in ['cls', 'args', 'kwargs', 'instance']:
             return super().__getattribute__(name)
         else:
-            if not self.instance:
+            if self.instance is None:
                 self.instance = self.cls(*self.args, **self.kwargs)
             return getattr(self.instance, name)
 
+    def __getitem__(self, key):
+        if self.instance is None:
+            self.instance = self.cls(*self.args, **self.kwargs)
+        return self.instance[key]
+
     def __del__(self):
-        if self.instance:
+        if self.instance is not None:
             del self.instance
         pass
     
