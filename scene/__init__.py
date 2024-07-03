@@ -9,10 +9,12 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+import torch
 import os
 import random
 import json
 import numpy as np
+from pathlib import Path
 from gaussian_renderer import render
 from utils.graphics_utils import BasicPointCloud
 from utils.system_utils import searchForMaxIteration
@@ -20,14 +22,15 @@ from scene.dataset_readers import sceneLoadTypeCallbacks
 from scene.gaussian_model import GaussianModel
 from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
+from utils.partition_utils import PointCloudMark
 
 class SceneCacheManager:
     cache_dict = dict()
 
-    def __init__(self, gaussians: GaussianModel, pcd: BasicPointCloud, init_uid: int):
+    def __init__(self, gaussians: GaussianModel, pcd: BasicPointCloud, init_cam: int):
         self.gaussians = gaussians
         self.pcd = pcd
-        self.init_index = self.cam_to_index(init_uid)
+        self.init_index = self.cam_to_index(init_cam)
         self.last_index = -1
         pass
 
@@ -39,20 +42,26 @@ class SceneCacheManager:
         pop_pcd = BasicPointCloud(points=self.pcd.points[pt_mask],
                                 colors=self.pcd.colors[pt_mask],
                                 normals=self.pcd.normals[pt_mask],
-                                marks=self.pcd.marks.marks[pt_mask])
+                                marks=PointCloudMark.from_marks(
+                                    self.pcd.marks.marks[pt_mask]
+                                ))
         ## remove points from `self.pcd`
         remain_mask = np.logical_not(pt_mask)
         self.pcd = BasicPointCloud(points=self.pcd.points[remain_mask],
                                 colors=self.pcd.colors[remain_mask],
                                 normals=self.pcd.normals[remain_mask],
-                                marks=self.pcd.marks.marks[remain_mask])
+                                marks=PointCloudMark.from_marks(
+                                    self.pcd.marks.marks[remain_mask]
+                                ))
         return pop_pcd
 
-    def pop_from_cache(self, index: int):
-        assert( 'marks' in self.cache_dict )
-        pt_mask = self.cache_dict['marks'].select(index)
+    def pop_from_cache(self, index: int) -> dict:
+        if len(self.cache_dict) == 0:
+            return dict()
+        ## select points from `self.cache_dict`
+        pt_mask = PointCloudMark.from_marks(self.cache_dict['marks']).select(index)
         if len(pt_mask) == 0:
-            return None
+            return dict()
         ## select points from `self.cache_dict`
         pop_dict = dict()
         for key, val in self.cache_dict.items():
@@ -64,6 +73,8 @@ class SceneCacheManager:
         return pop_dict
 
     def load_init_pcd(self):
+        if self.pcd.marks is None: return self.pcd
+        ##
         self.last_index = self.init_index
         pt_mask = self.pcd.marks.select(self.init_index)
         init_pcd = self.pop_from_pcd(pt_mask)
@@ -74,10 +85,17 @@ class SceneCacheManager:
             self.cache_dict = new_dict
         else:
             for key, val in new_dict.items():
-                self.cache_dict[key] = np.concatenate([self.cache_dict[key], val], axis=0)
+                if type(val) == torch.Tensor:
+                    self.cache_dict[key] = torch.cat([self.cache_dict[key], val], dim=0)
+                elif type(val) == np.ndarray:
+                    self.cache_dict[key] = np.concatenate([self.cache_dict[key], val], axis=0)
+                else:
+                    raise ValueError("Unsupported type in cache_dict")
         pass
 
     def hit(self, cam):
+        if self.pcd.marks is None: return
+        ##
         this_index = self.cam_to_index(cam)
         if this_index == self.last_index:
             return
@@ -86,9 +104,11 @@ class SceneCacheManager:
         ## 2. load tensor from pcd if pcd is not empty
         if self.pcd.points.shape[0] > 0:
             pt_mask = self.pcd.marks.select(this_index)
-            tensor_dict = self.gaussians.pcd_to_tensor( self.pop_from_pcd(pt_mask) )
-            self.gaussians.expand_optimizer_from_cache(tensor_dict)
-            del tensor_dict
+            pop_pcd = self.pop_from_pcd(pt_mask)
+            if len(pop_pcd.points) > 0:
+                tensor_dict = self.gaussians.pcd_to_tensor( pop_pcd )
+                self.gaussians.expand_optimizer_from_cache(tensor_dict)
+                del tensor_dict
         ## 3. load tensor from cache_dict (cpu-->cuda)
         cached = self.pop_from_cache(this_index)
         if cached:
@@ -129,6 +149,7 @@ class Scene:
             assert False, "Could not recognize scene type!"
 
         if not self.loaded_iter:
+            Path(self.model_path).mkdir(parents=True, exist_ok=True)
             with open(scene_info.ply_path, 'rb') as src_file, open(os.path.join(self.model_path, "input.ply") , 'wb') as dest_file:
                 dest_file.write(src_file.read())
             json_cams = []
@@ -163,7 +184,10 @@ class Scene:
 
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
-        self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
+        self.gaussians.save_ply(
+            path=os.path.join(point_cloud_path, "point_cloud.ply"),
+            cache_dict=self.cache.cache_dict
+        )
 
     def getTrainCameras(self, scale=1.0):
         return cameraList_from_camInfos(self.scene_info.train_cameras, scale, self.args)

@@ -57,12 +57,11 @@ class PointCloudMark:
         else:
             return (self.marks[:, index] & val != 0)
 
-    def select_multi(self, bits: list):
-        return np.logical_or.reduce([self.select(bit) for bit in bits])
-
     def prune(self, prune_mask: np.ndarray):
-        pruned = self.marks[prune_mask]
-        self.marks = self.marks[~prune_mask]
+        _prune_mask = prune_mask.cpu().numpy() if hasattr(prune_mask, 'cpu') else prune_mask
+        pruned = self.marks[_prune_mask]
+        self.marks = self.marks[~_prune_mask]
+        del _prune_mask
         return pruned
 
     def concat(self, marks: np.ndarray):
