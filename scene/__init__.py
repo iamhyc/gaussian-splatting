@@ -32,6 +32,7 @@ class SceneCacheManager:
         self.pcd = pcd
         self.init_index = self.cam_to_index(init_cam)
         self.last_index = -1
+        self.hit_counter = 0
         pass
 
     def cam_to_index(self, cam):
@@ -94,13 +95,16 @@ class SceneCacheManager:
         pass
 
     def hit(self, cam):
+        NUM_OFFLOAD = 1
         if self.pcd.marks is None: return
         ##
+        self.hit_counter += 1
         this_index = self.cam_to_index(cam)
         if this_index == self.last_index:
             return
         ## 1. shrink optimizer to cache_dict (cuda-->cpu, delayed)
-        detached = self.gaussians.shrink_optimizer_to_cache(this_index)
+        if self.hit_counter % NUM_OFFLOAD == 0:
+            detached = self.gaussians.shrink_optimizer_to_cache(this_index)
         ## 2. load tensor from pcd if pcd is not empty
         if self.pcd.points.shape[0] > 0:
             pt_mask = self.pcd.marks.select(this_index)
@@ -113,7 +117,8 @@ class SceneCacheManager:
         cached = self.pop_from_cache(this_index)
         if cached:
             self.gaussians.expand_optimizer_from_cache(cached)
-        self.concat_cache(detached) # delayed append
+        if self.hit_counter % NUM_OFFLOAD == 0:
+            self.concat_cache(detached) # delayed append
         ## 4. update `last_index`
         self.last_index = this_index
         pass

@@ -14,7 +14,6 @@ import numpy as np
 from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation
 from torch import nn
 import os
-from typing import NamedTuple
 from utils.system_utils import mkdir_p
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import RGB2SH
@@ -126,18 +125,18 @@ class GaussianModel:
             self.active_sh_degree += 1
 
     def pcd_to_tensor(self, pcd : BasicPointCloud) -> dict:
-        fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
-        fused_color = RGB2SH(torch.tensor(np.asarray(pcd.colors)).float().cuda())
-        features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
+        fused_point_cloud = torch.tensor(np.asarray(pcd.points), dtype=torch.float32, device='cuda')
+        fused_color = RGB2SH( torch.tensor(np.asarray(pcd.colors), dtype=torch.float32, device='cuda') )
+        features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2), dtype=torch.float32, device='cuda')
         features[:, :3, 0 ] = fused_color
         features[:, 3:, 1:] = 0.0
 
-        dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
+        dist2 = torch.clamp_min( distCUDA2(torch.tensor(np.asarray(pcd.points), dtype=torch.float32, device='cuda')), 0.0000001 )
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device='cuda')
         rots[:, 0] = 1
 
-        opacities = inverse_sigmoid(0.5 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device='cuda'))
+        opacities = inverse_sigmoid(0.5 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float32, device='cuda'))
 
         return dict(
             xyz = nn.Parameter(fused_point_cloud.requires_grad_(True)),
@@ -352,19 +351,19 @@ class GaussianModel:
             stored_state = self.optimizer.state.get(group['params'][0], None)
             if stored_state is not None:
                 if f'{_key}_exp_avg' in tensors_dict and f'{_key}_exp_avg_sq' in tensors_dict:
-                    stored_state['exp_avg'] = torch.cat((stored_state['exp_avg'], tensors_dict[f'{_key}_exp_avg'].cuda()), dim=0)
-                    stored_state['exp_avg_sq'] = torch.cat((stored_state['exp_avg_sq'], tensors_dict[f'{_key}_exp_avg_sq'].cuda()), dim=0)
+                    stored_state['exp_avg'] = torch.cat((stored_state['exp_avg'], tensors_dict[f'{_key}_exp_avg'].to(device='cuda',non_blocking=False)), dim=0)
+                    stored_state['exp_avg_sq'] = torch.cat((stored_state['exp_avg_sq'], tensors_dict[f'{_key}_exp_avg_sq'].to(device='cuda',non_blocking=False)), dim=0)
                 else:
                     stored_state['exp_avg'] = torch.cat((stored_state['exp_avg'], torch.zeros_like(extension_tensor, device='cuda')), dim=0)
                     stored_state['exp_avg_sq'] = torch.cat((stored_state['exp_avg_sq'], torch.zeros_like(extension_tensor, device='cuda')), dim=0)
 
                 del self.optimizer.state[group['params'][0]]
-                group['params'][0] = nn.Parameter(torch.cat((group['params'][0], extension_tensor.cuda()), dim=0).requires_grad_(True))
+                group['params'][0] = nn.Parameter(torch.cat((group['params'][0], extension_tensor.to(device='cuda',non_blocking=False)), dim=0).requires_grad_(True))
                 self.optimizer.state[group['params'][0]] = stored_state
 
                 optimizable_tensors[_key] = group['params'][0]
             else:
-                group['params'][0] = nn.Parameter(torch.cat((group['params'][0], extension_tensor.cuda()), dim=0).requires_grad_(True))
+                group['params'][0] = nn.Parameter(torch.cat((group['params'][0], extension_tensor.to(device='cuda',non_blocking=False)), dim=0).requires_grad_(True))
                 optimizable_tensors[_key] = group['params'][0]
 
         return optimizable_tensors
@@ -411,7 +410,7 @@ class GaussianModel:
         new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
         new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
         if self.marks is not None:
-            _selected_pts_mask = selected_pts_mask.cpu().numpy()
+            _selected_pts_mask = selected_pts_mask.cpu().numpy() #TODO: marks being tensor
             new_marks = self.marks.marks[_selected_pts_mask].repeat(N,axis=0)
             del _selected_pts_mask
         else:
@@ -436,7 +435,7 @@ class GaussianModel:
         new_rotation = self._rotation[selected_pts_mask]
         if self.marks is not None:
             # selected_pts_mask to numpy array
-            selected_pts_mask = selected_pts_mask.cpu().numpy()
+            selected_pts_mask = selected_pts_mask.cpu().numpy() # marks being tensor
             new_marks = self.marks.marks[selected_pts_mask]
         else:
             new_marks = None
@@ -458,7 +457,7 @@ class GaussianModel:
             prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
         self.prune_points(prune_mask)
 
-        torch.cuda.empty_cache()
+        # torch.cuda.empty_cache()
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
@@ -500,9 +499,9 @@ class GaussianModel:
         self._rotation = optimizable_tensors['rotation']
         ##
         if 'xyz_gradient_accum' in cached:
-            self.xyz_gradient_accum = torch.cat((self.xyz_gradient_accum, cached['xyz_gradient_accum'].cuda()), dim=0)
-            self.denom = torch.cat((self.denom, cached['denom'].cuda()), dim=0)
-            self.max_radii2D = torch.cat((self.max_radii2D, cached['max_radii2D'].cuda()), dim=0)
+            self.xyz_gradient_accum = torch.cat((self.xyz_gradient_accum, cached['xyz_gradient_accum'].to(device='cuda',non_blocking=False)), dim=0)
+            self.denom = torch.cat((self.denom, cached['denom'].to(device='cuda',non_blocking=False)), dim=0)
+            self.max_radii2D = torch.cat((self.max_radii2D, cached['max_radii2D'].to(device='cuda',non_blocking=False)), dim=0)
         else:
             _shape = (cached['xyz'].shape[0], 1)
             self.xyz_gradient_accum = torch.cat((self.xyz_gradient_accum, torch.zeros(_shape, device='cuda')), dim=0)
