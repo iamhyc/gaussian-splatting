@@ -16,8 +16,11 @@ conda activate gaussian_splatting
 mkdir dataset
 cd dataset && aria2c https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/datasets/input/tandt_db.zip && unzip tandt_db.zip && rm tandt_db.zip && cd ..
 
-# train with demo dataset
-python3 ./train.py -s dataset/tandt/train --model_path output/train
+# (Optional) Genera point cloud marks
+python3 ./visualize.py -s dataset/wei
+
+# train with dataset
+python3 ./train.py -s dataset/wei --model_path output/wei
 
 ```
 
