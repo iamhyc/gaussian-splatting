@@ -198,12 +198,11 @@ def main(args):
     ## generate pcd partition mark signature
     output_file = CHOP_PATH / '..' / '0' / 'points3D.mark'
     _points = np.asarray(pcd.points)
-    marks = PointCloudMark(_points.shape[0], len(images))
+    pcd_marks = PointCloudMark(_points.shape[0], len(images), device='cpu')
     for i,img in enumerate(tqdm(images, 'mark point cloud')):
         # marks[ (img['pt_map'],), i ] = True
-        marks.set(img['pt_map'], i)
-    with open(output_file, 'wb+') as fp:
-        np.save(fp, marks.marks)
+        pcd_marks.set(img['pt_map'], i)
+    pcd_marks.save(output_file)
 
     pass
 

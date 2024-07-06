@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import numpy as np
+import torch
 
 class LazyLoader:
     def __init__(self, cls, *args, **kwargs):
@@ -30,41 +31,52 @@ class LazyLoader:
     pass
 
 class PointCloudMark:
-    def __init__(self, pcd_size: int, image_size: int):
+    def __init__(self, pcd_size: int, image_size: int, device='cuda', _marks=None):
         _length = int(np.ceil( image_size/8 ))
-        self.marks = np.zeros((pcd_size,_length), dtype=np.uint8)
+        self.device = device
+        if _marks is not None:
+            self._marks = _marks
+        else:
+            self._marks = torch.zeros((pcd_size,_length), dtype=torch.uint8, device=device)
         pass
 
     @staticmethod
-    def from_marks(marks: np.ndarray):
+    def from_marks(marks: np.ndarray, device='cuda'):
         pcd_size, image_size = marks.shape
         image_size *= 8
-        marks_obj = PointCloudMark(pcd_size, image_size)
-        marks_obj.marks  = marks
-        return marks_obj
+        pcm = PointCloudMark(pcd_size, image_size, device=device,
+                             _marks=torch.tensor(marks, dtype=torch.uint8, device=device))
+        return pcm
 
-    def set(self, pt_map: np.ndarray, bit: int):
+    def __getitem__(self, key):
+        return self._marks[key]
+
+    def set(self, pt_map, bit: int):
         index, offset = (bit//8), (bit%8)
         val = 1 << offset
-        self.marks[ (pt_map,), index ] |= val
+        ##
+        pt_map = torch.tensor(pt_map, dtype=torch.long, device=self.device)
+        self._marks[ pt_map, index ] |= val
         pass
 
-    def select(self, bit: int, reverse: bool=False):
+    def select(self, bit: int, reverse: bool=False) -> torch.Tensor:
         index, offset = (bit//8), (bit%8)
         val = 1 << offset
         if reverse:
-            return (self.marks[:, index] & val == 0)
+            return (self._marks[:, index] & val == 0)
         else:
-            return (self.marks[:, index] & val != 0)
+            return (self._marks[:, index] & val != 0)
 
-    def prune(self, prune_mask: np.ndarray):
-        _prune_mask = prune_mask.cpu().numpy() if hasattr(prune_mask, 'cpu') else prune_mask
-        pruned = self.marks[_prune_mask]
-        self.marks = self.marks[~_prune_mask]
-        del _prune_mask
+    def prune(self, prune_mask: torch.Tensor) -> torch.Tensor:
+        pruned = self._marks[prune_mask]
+        self._marks = self._marks[~prune_mask]
         return pruned
 
-    def concat(self, marks: np.ndarray):
-        self.marks = np.concatenate([self.marks, marks], axis=0)
+    def concat(self, marks: torch.Tensor):
+        self._marks = torch.cat([self._marks, marks], dim=0)
+
+    def save(self, file_path: str):
+        with open(file_path, 'wb+') as fp:
+            np.save(fp, self._marks.cpu().numpy())
 
     pass

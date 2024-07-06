@@ -20,17 +20,16 @@ import numpy as np
 import json
 from pathlib import Path
 from plyfile import PlyData, PlyElement
-from utils.partition_utils import PointCloudMark
 from utils.sh_utils import SH2RGB
 from scene.gaussian_model import BasicPointCloud
 
 class CameraInfo(NamedTuple):
     uid: int
-    R: np.array
-    T: np.array
-    FovY: np.array
-    FovX: np.array
-    image: np.array
+    R: np.ndarray
+    T: np.ndarray
+    FovY: np.ndarray
+    FovX: np.ndarray
+    image: np.ndarray
     image_path: str
     image_name: str
     width: int
@@ -99,7 +98,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         image_name = os.path.basename(image_path).split(".")[0]
         image = Image.open(image_path)
 
-        cam_info = CameraInfo(uid=extr.id, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+        cam_info = CameraInfo(uid=extr.id, R=R, T=T, FovY=FovY, FovX=FovX, image=image, # type: ignore
                               image_path=image_path, image_name=image_name, width=width, height=height)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
@@ -114,7 +113,6 @@ def fetchPly(path):
     ##
     marks_path = Path(path).with_suffix('.mark')
     marks = np.load(marks_path) if marks_path.exists() else None
-    marks = PointCloudMark.from_marks(marks) if marks is not None else None
     return BasicPointCloud(points=positions, colors=colors, normals=normals, marks=marks)
 
 def storePly(path, xyz, rgb):
@@ -173,7 +171,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
         pcd = fetchPly(ply_path)
     except Exception as e:
         print('fetchPly:', e)
-        pcd = None
+        raise e
 
     scene_info = SceneInfo(point_cloud=pcd,
                            train_cameras=train_cam_infos,
@@ -219,7 +217,7 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             FovY = fovy 
             FovX = fovx
 
-            cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+            cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image, # type: ignore
                             image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1]))
             
     return cam_infos
@@ -245,13 +243,13 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
         # We create random points inside the bounds of the synthetic Blender scenes
         xyz = np.random.random((num_pts, 3)) * 2.6 - 1.3
         shs = np.random.random((num_pts, 3)) / 255.0
-        pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
+        pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)), marks=None)
 
         storePly(ply_path, xyz, SH2RGB(shs) * 255)
     try:
         pcd = fetchPly(ply_path)
-    except:
-        pcd = None
+    except Exception as e:
+        raise e
 
     scene_info = SceneInfo(point_cloud=pcd,
                            train_cameras=train_cam_infos,

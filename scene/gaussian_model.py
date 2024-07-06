@@ -20,6 +20,7 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
+from utils.partition_utils import PointCloudMark
 
 class GaussianModel:
 
@@ -50,7 +51,7 @@ class GaussianModel:
         self._scaling = torch.empty(0)
         self._rotation = torch.empty(0)
         self._opacity = torch.empty(0)
-        self.marks = None
+        self.pcd_marks = None
         self.max_radii2D = torch.empty(0)
         self.xyz_gradient_accum = torch.empty(0)
         self.denom = torch.empty(0)
@@ -60,6 +61,7 @@ class GaussianModel:
         self.setup_functions()
 
     def capture(self):
+        assert(self.optimizer is not None)
         return (
             self.active_sh_degree,
             self._xyz,
@@ -68,7 +70,7 @@ class GaussianModel:
             self._scaling,
             self._rotation,
             self._opacity,
-            self.marks,
+            self.pcd_marks,
             self.max_radii2D,
             self.xyz_gradient_accum,
             self.denom,
@@ -77,6 +79,7 @@ class GaussianModel:
         )
     
     def restore(self, model_args, training_args):
+        assert(self.optimizer is not None)
         (self.active_sh_degree, 
         self._xyz, 
         self._features_dc, 
@@ -84,7 +87,7 @@ class GaussianModel:
         self._scaling, 
         self._rotation, 
         self._opacity,
-        self.marks,
+        self.pcd_marks,
         self.max_radii2D, 
         xyz_gradient_accum, 
         denom,
@@ -138,19 +141,21 @@ class GaussianModel:
 
         opacities = inverse_sigmoid(0.5 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float32, device='cuda'))
 
+        marks = torch.tensor(pcd.marks, dtype=torch.uint8, device='cuda') if (pcd.marks is not None) else None
+
         return dict(
-            xyz = nn.Parameter(fused_point_cloud.requires_grad_(True)),
-            features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True)),
-            features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True)),
-            scaling = nn.Parameter(scales.requires_grad_(True)),
-            rotation = nn.Parameter(rots.requires_grad_(True)),
-            opacity = nn.Parameter(opacities.requires_grad_(True)),
-            marks = pcd.marks.marks if (pcd.marks is not None) else None,
+            xyz = nn.parameter.Parameter(fused_point_cloud.requires_grad_(True)),
+            features_dc = nn.parameter.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True)),
+            features_rest = nn.parameter.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True)),
+            scaling = nn.parameter.Parameter(scales.requires_grad_(True)),
+            rotation = nn.parameter.Parameter(rots.requires_grad_(True)),
+            opacity = nn.parameter.Parameter(opacities.requires_grad_(True)),
+            marks = marks,
         )
 
     def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float):
         self.spatial_lr_scale = spatial_lr_scale
-        self.marks = pcd.marks
+        self.pcd_marks = PointCloudMark.from_marks(pcd.marks) if (pcd.marks is not None) else None
 
         print('Number of points at initialisation : ', pcd.points.shape[0])
 
@@ -186,6 +191,7 @@ class GaussianModel:
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
+        assert(self.optimizer is not None)
         for param_group in self.optimizer.param_groups:
             if param_group['name'] == 'xyz':
                 lr = self.xyz_scheduler_args(iteration)
@@ -283,16 +289,17 @@ class GaussianModel:
         for idx, attr_name in enumerate(rot_names):
             rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
 
-        self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device='cuda').requires_grad_(True))
-        self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device='cuda').transpose(1, 2).contiguous().requires_grad_(True))
-        self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device='cuda').transpose(1, 2).contiguous().requires_grad_(True))
-        self._opacity = nn.Parameter(torch.tensor(opacities, dtype=torch.float, device='cuda').requires_grad_(True))
-        self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device='cuda').requires_grad_(True))
-        self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device='cuda').requires_grad_(True))
+        self._xyz = nn.parameter.Parameter(torch.tensor(xyz, dtype=torch.float, device='cuda').requires_grad_(True))
+        self._features_dc = nn.parameter.Parameter(torch.tensor(features_dc, dtype=torch.float, device='cuda').transpose(1, 2).contiguous().requires_grad_(True))
+        self._features_rest = nn.parameter.Parameter(torch.tensor(features_extra, dtype=torch.float, device='cuda').transpose(1, 2).contiguous().requires_grad_(True))
+        self._opacity = nn.parameter.Parameter(torch.tensor(opacities, dtype=torch.float, device='cuda').requires_grad_(True))
+        self._scaling = nn.parameter.Parameter(torch.tensor(scales, dtype=torch.float, device='cuda').requires_grad_(True))
+        self._rotation = nn.parameter.Parameter(torch.tensor(rots, dtype=torch.float, device='cuda').requires_grad_(True))
 
         self.active_sh_degree = self.max_sh_degree
 
     def replace_tensor_to_optimizer(self, tensor, name):
+        assert(self.optimizer is not None)
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
             if group['name'] == name:
@@ -301,13 +308,14 @@ class GaussianModel:
                 stored_state['exp_avg_sq'] = torch.zeros_like(tensor)
 
                 del self.optimizer.state[group['params'][0]]
-                group['params'][0] = nn.Parameter(tensor.requires_grad_(True))
+                group['params'][0] = nn.parameter.Parameter(tensor.requires_grad_(True))
                 self.optimizer.state[group['params'][0]] = stored_state
 
                 optimizable_tensors[group['name']] = group['params'][0]
         return optimizable_tensors
 
     def _prune_optimizer(self, mask):
+        assert(self.optimizer is not None)
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
             stored_state = self.optimizer.state.get(group['params'][0], None)
@@ -316,12 +324,12 @@ class GaussianModel:
                 stored_state['exp_avg_sq'] = stored_state['exp_avg_sq'][mask]
 
                 del self.optimizer.state[group['params'][0]]
-                group['params'][0] = nn.Parameter((group['params'][0][mask].requires_grad_(True)))
+                group['params'][0] = nn.parameter.Parameter((group['params'][0][mask].requires_grad_(True)))
                 self.optimizer.state[group['params'][0]] = stored_state
 
                 optimizable_tensors[group['name']] = group['params'][0]
             else:
-                group['params'][0] = nn.Parameter(group['params'][0][mask].requires_grad_(True))
+                group['params'][0] = nn.parameter.Parameter(group['params'][0][mask].requires_grad_(True))
                 optimizable_tensors[group['name']] = group['params'][0]
         return optimizable_tensors
 
@@ -335,14 +343,15 @@ class GaussianModel:
         self._opacity = optimizable_tensors['opacity']
         self._scaling = optimizable_tensors['scaling']
         self._rotation = optimizable_tensors['rotation']
-        if self.marks is not None and prune_marks:
-            self.marks.prune(mask)
+        if (self.pcd_marks is not None) and prune_marks:
+            self.pcd_marks.prune(mask)
 
         self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
         self.denom = self.denom[valid_points_mask]
         self.max_radii2D = self.max_radii2D[valid_points_mask]
 
     def cat_tensors_to_optimizer(self, tensors_dict):
+        assert(self.optimizer is not None)
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
             assert len(group['params']) == 1
@@ -358,12 +367,12 @@ class GaussianModel:
                     stored_state['exp_avg_sq'] = torch.cat((stored_state['exp_avg_sq'], torch.zeros_like(extension_tensor, device='cuda')), dim=0)
 
                 del self.optimizer.state[group['params'][0]]
-                group['params'][0] = nn.Parameter(torch.cat((group['params'][0], extension_tensor.to(device='cuda',non_blocking=False)), dim=0).requires_grad_(True))
+                group['params'][0] = nn.parameter.Parameter(torch.cat((group['params'][0], extension_tensor.to(device='cuda',non_blocking=False)), dim=0).requires_grad_(True))
                 self.optimizer.state[group['params'][0]] = stored_state
 
                 optimizable_tensors[_key] = group['params'][0]
             else:
-                group['params'][0] = nn.Parameter(torch.cat((group['params'][0], extension_tensor.to(device='cuda',non_blocking=False)), dim=0).requires_grad_(True))
+                group['params'][0] = nn.parameter.Parameter(torch.cat((group['params'][0], extension_tensor.to(device='cuda',non_blocking=False)), dim=0).requires_grad_(True))
                 optimizable_tensors[_key] = group['params'][0]
 
         return optimizable_tensors
@@ -383,8 +392,8 @@ class GaussianModel:
         self._opacity = optimizable_tensors['opacity']
         self._scaling = optimizable_tensors['scaling']
         self._rotation = optimizable_tensors['rotation']
-        if (self.marks is not None) and (new_marks is not None):
-            self.marks.concat(new_marks)
+        if (self.pcd_marks is not None) and (new_marks is not None):
+            self.pcd_marks.concat(new_marks)
 
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device='cuda')
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device='cuda')
@@ -409,16 +418,14 @@ class GaussianModel:
         new_features_dc = self._features_dc[selected_pts_mask].repeat(N,1,1)
         new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
         new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
-        if self.marks is not None:
-            _selected_pts_mask = selected_pts_mask.cpu().numpy() #TODO: marks being tensor
-            new_marks = self.marks.marks[_selected_pts_mask].repeat(N,axis=0)
-            del _selected_pts_mask
+        if self.pcd_marks is not None:
+            new_marks = self.pcd_marks[selected_pts_mask].repeat(N,1)
         else:
             new_marks = None
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, new_marks)
 
-        prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device='cuda', dtype=bool)))
+        prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device='cuda', dtype=bool))) #type: ignore
         self.prune_points(prune_filter)
 
     def densify_and_clone(self, grads, grad_threshold, scene_extent):
@@ -433,10 +440,8 @@ class GaussianModel:
         new_opacities = self._opacity[selected_pts_mask]
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
-        if self.marks is not None:
-            # selected_pts_mask to numpy array
-            selected_pts_mask = selected_pts_mask.cpu().numpy() # marks being tensor
-            new_marks = self.marks.marks[selected_pts_mask]
+        if (self.pcd_marks is not None):
+            new_marks = self.pcd_marks[selected_pts_mask]
         else:
             new_marks = None
         del selected_pts_mask
@@ -465,8 +470,10 @@ class GaussianModel:
 
     # Reference: https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.state_dict.html
     def shrink_optimizer_to_cache(self, index: int) -> dict:
+        assert(self.pcd_marks is not None)
+        assert(self.optimizer is not None)
         res = dict()
-        prune_mask = self.marks.select(index, reverse=True)
+        prune_mask = self.pcd_marks.select(index, reverse=True)
         ## detach gaussian_dict
         for group in self.optimizer.param_groups:
             _key = group['name']
@@ -483,12 +490,13 @@ class GaussianModel:
         res['xyz_gradient_accum'] = self.xyz_gradient_accum[prune_mask].detach().cpu()
         res['denom'] = self.denom[prune_mask].detach().cpu()
         res['max_radii2D'] = self.max_radii2D[prune_mask].detach().cpu()
-        res['marks'] = self.marks.prune(prune_mask)
+        res['marks'] = self.pcd_marks.prune(prune_mask)
         ## prune from optimizer
         self.prune_points(prune_mask, prune_marks=False)
         return res
 
     def expand_optimizer_from_cache(self, cached: dict):
+        assert(self.pcd_marks is not None)
         optimizable_tensors = self.cat_tensors_to_optimizer(cached)
         ##
         self._xyz = optimizable_tensors['xyz']
@@ -508,6 +516,6 @@ class GaussianModel:
             self.denom = torch.cat((self.denom, torch.zeros(_shape, device='cuda')), dim=0)
             self.max_radii2D = torch.cat((self.max_radii2D, torch.zeros(_shape[0], device='cuda')), dim=0)
         ##
-        self.marks.concat(cached['marks'])
+        self.pcd_marks.concat(cached['marks'])
         del cached
         pass

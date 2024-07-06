@@ -14,13 +14,11 @@ import math
 import numpy as np
 from typing import NamedTuple
 
-from utils.partition_utils import PointCloudMark
-
 class BasicPointCloud(NamedTuple):
     points : np.array
     colors : np.array
     normals : np.array
-    marks : PointCloudMark
+    marks : np.array
 
 def geom_transform_points(points, transf_matrix):
     P, _ = points.shape

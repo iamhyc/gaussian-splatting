@@ -9,6 +9,7 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+from tqdm import tqdm
 import torch
 import os
 import random
@@ -27,34 +28,38 @@ from utils.partition_utils import PointCloudMark
 class SceneCacheManager:
     cache_dict = dict()
 
-    def __init__(self, gaussians: GaussianModel, pcd: BasicPointCloud, init_cam: int):
+    def __init__(self, gaussians: GaussianModel, pcd: BasicPointCloud, hit_trace: list):
         self.gaussians = gaussians
-        self.pcd = pcd
-        self.init_index = self.cam_to_index(init_cam)
-        self.last_index = -1
+        self.hit_trace = [ self.cam_to_index(cam)  for cam in hit_trace ]
+        self.chopped_pcd = self.prefetch_pcd(pcd, self.hit_trace)
         self.hit_counter = 0
         pass
 
     def cam_to_index(self, cam):
         return cam.uid//2
 
-    def pop_from_pcd(self, pt_mask):
-        ## select points from `self.pcd`
-        pop_pcd = BasicPointCloud(points=self.pcd.points[pt_mask],
-                                colors=self.pcd.colors[pt_mask],
-                                normals=self.pcd.normals[pt_mask],
-                                marks=PointCloudMark.from_marks(
-                                    self.pcd.marks.marks[pt_mask]
-                                ))
-        ## remove points from `self.pcd`
-        remain_mask = np.logical_not(pt_mask)
-        self.pcd = BasicPointCloud(points=self.pcd.points[remain_mask],
-                                colors=self.pcd.colors[remain_mask],
-                                normals=self.pcd.normals[remain_mask],
-                                marks=PointCloudMark.from_marks(
-                                    self.pcd.marks.marks[remain_mask]
-                                ))
-        return pop_pcd
+    def prefetch_pcd(self, pcd: BasicPointCloud, index_list: list):
+        if pcd.marks is None:
+            return { index_list[0] : pcd }
+        ##
+        chopped_pcd = dict()
+        for index in tqdm(index_list, desc="PCD preprocessing"):
+            pcd_marks = PointCloudMark.from_marks(pcd.marks, device='cpu')
+            ## select points from `pcd`
+            pt_mask = pcd_marks.select(index).numpy()
+            pop_pcd = BasicPointCloud(points=pcd.points[pt_mask],
+                                    colors=pcd.colors[pt_mask],
+                                    normals=pcd.normals[pt_mask],
+                                    marks=pcd.marks[pt_mask])
+            chopped_pcd[index] = pop_pcd
+            ## remove points from `pcd`
+            remain_mask = ~pt_mask
+            pcd = BasicPointCloud(points=pcd.points[remain_mask],
+                                colors=pcd.colors[remain_mask],
+                                normals=pcd.normals[remain_mask],
+                                marks=pcd.marks[remain_mask])
+            ##
+        return chopped_pcd
 
     def pop_from_cache(self, index: int) -> dict:
         if len(self.cache_dict) == 0:
@@ -68,18 +73,14 @@ class SceneCacheManager:
         for key, val in self.cache_dict.items():
             pop_dict[key] = val[pt_mask]
         ## remove points from `self.cache_dict`
-        remain_mask = np.logical_not(pt_mask)
+        remain_mask = ~pt_mask
         for key, val in self.cache_dict.items():
             self.cache_dict[key] = val[remain_mask]
         return pop_dict
 
     def load_init_pcd(self):
-        if self.pcd.marks is None: return self.pcd
-        ##
-        self.last_index = self.init_index
-        pt_mask = self.pcd.marks.select(self.init_index)
-        init_pcd = self.pop_from_pcd(pt_mask)
-        return init_pcd
+        first_index = self.hit_trace[0]
+        return self.chopped_pcd[first_index]
 
     def concat_cache(self, new_dict: dict):
         if len(self.cache_dict) == 0:
@@ -96,19 +97,17 @@ class SceneCacheManager:
 
     def hit(self, cam):
         NUM_OFFLOAD = 1
-        if self.pcd.marks is None: return
+        if len(self.chopped_pcd)==0 and len(self.cache_dict)==0:
+            return
         ##
         self.hit_counter += 1
         this_index = self.cam_to_index(cam)
-        if this_index == self.last_index:
-            return
         ## 1. shrink optimizer to cache_dict (cuda-->cpu, delayed)
         if self.hit_counter % NUM_OFFLOAD == 0:
             detached = self.gaussians.shrink_optimizer_to_cache(this_index)
         ## 2. load tensor from pcd if pcd is not empty
-        if self.pcd.points.shape[0] > 0:
-            pt_mask = self.pcd.marks.select(this_index)
-            pop_pcd = self.pop_from_pcd(pt_mask)
+        if this_index in self.chopped_pcd:
+            pop_pcd = self.chopped_pcd.pop(this_index)
             if len(pop_pcd.points) > 0:
                 tensor_dict = self.gaussians.pcd_to_tensor( pop_pcd )
                 self.gaussians.expand_optimizer_from_cache(tensor_dict)
@@ -120,7 +119,6 @@ class SceneCacheManager:
         if self.hit_counter % NUM_OFFLOAD == 0:
             self.concat_cache(detached) # delayed append
         ## 4. update `last_index`
-        self.last_index = this_index
         pass
 
     pass
@@ -134,7 +132,7 @@ class Scene:
         """b
         :param path: Path to colmap scene main folder.
         """
-        self.model_path = args.model_path
+        self.model_path = args.model_path # type: ignore
         self.loaded_iter = None
         self.gaussians = gaussians
 
@@ -145,11 +143,11 @@ class Scene:
                 self.loaded_iter = load_iteration
             print("Loading trained model at iteration {}".format(self.loaded_iter))
 
-        if os.path.exists(os.path.join(args.source_path, "sparse")):
-            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval)
-        elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
+        if os.path.exists(os.path.join(args.source_path, "sparse")): # type: ignore
+            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval) # type: ignore
+        elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")): # type: ignore
             print("Found transforms_train.json file, assuming Blender data set!")
-            scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
+            scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval) # type: ignore
         else:
             assert False, "Could not recognize scene type!"
 
@@ -176,7 +174,7 @@ class Scene:
         self.scene_info = scene_info
         self.args = args
 
-        self.cache = SceneCacheManager(gaussians, scene_info.point_cloud, scene_info.train_cameras[0])
+        self.cache = SceneCacheManager(gaussians, scene_info.point_cloud, scene_info.train_cameras)
 
         if self.loaded_iter:
             self.gaussians.load_ply(os.path.join(self.model_path,
