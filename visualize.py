@@ -10,10 +10,11 @@ from tqdm import tqdm
 from utils.partition_utils import PointCloudMark
 
 MAX_DEPTH = 10
+HPR_SCALE = 5000
 
 DEBUG_VISUALIZE = ['none',
-    'camera_trajectory', 'pyramid_crop', 'hidden_removal', 'bbox'
-    ][0]
+    'camera_trajectory', 'pyramid_crop', 'hidden_removal', 'remap'
+    ][3]
 
 def pt_remap(*pt_map_chain):
     ori_map = np.copy(pt_map_chain[0])
@@ -57,6 +58,13 @@ def visualize_chopped_pcd(pcd, chopped_pcd, pyramid):
     )
     coord = build_coord_geometry()
     o3d.visualization.draw_geometries([pcd, chopped_pcd, pyramid_geometry, *coord])
+    pass
+
+def visualize_remap_pcd(pcd, chopped_pcd, pt_map):
+    ori_pcd = pcd.select_by_index(pt_map)
+    monochromize(ori_pcd, [1,0,0])
+    monochromize(chopped_pcd, [0,1,0])
+    o3d.visualization.draw_geometries([ori_pcd, chopped_pcd])
     pass
 
 def visualize_trajectory(pcd, images):
@@ -178,13 +186,16 @@ def main(args):
 
         ## hidden point removal
         diameter = np.linalg.norm( chopped_pcd.get_max_bound() - chopped_pcd.get_min_bound() )
-        _, pt_map_C = chopped_pcd.hidden_point_removal(pyramid[0], diameter*100)
+        _, pt_map_C = chopped_pcd.hidden_point_removal(pyramid[0], diameter*HPR_SCALE)
         chopped_pcd = chopped_pcd.select_by_index(pt_map_C)
         if DEBUG_VISUALIZE=='hidden_removal': visualize_chopped_pcd(pcd, chopped_pcd, pyramid)
         # o3d.io.write_point_cloud(output_file.as_posix(), chopped_pcd)
         # image['bbox'] = chopped_pcd.get_minimal_oriented_bounding_box()
+
+        ## get pt_map in the original pcd
         image['pt_map'] = pt_remap(pt_map_C, pt_map_B, pt_map_A)
         np.save(output_file, image['pt_map'])
+        if DEBUG_VISUALIZE=='remap': visualize_remap_pcd(pcd, chopped_pcd, image['pt_map'])
         pass
 
     ## visualize the cropped bounding boxes
@@ -198,12 +209,11 @@ def main(args):
     ## generate pcd partition mark signature
     output_file = CHOP_PATH / '..' / '0' / 'points3D.mark'
     _points = np.asarray(pcd.points)
-    pcd_marks = PointCloudMark(_points.shape[0], len(images), device='cpu')
+    pcd_marks = PointCloudMark(_points.shape[0], len(images))
     for i,img in enumerate(tqdm(images, 'mark point cloud')):
         # marks[ (img['pt_map'],), i ] = True
         pcd_marks.set(img['pt_map'], i)
     pcd_marks.save(output_file)
-
     pass
 
 if __name__ == '__main__':

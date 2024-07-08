@@ -41,11 +41,15 @@ class PointCloudMark:
         pass
 
     @staticmethod
-    def from_marks(marks: np.ndarray, device='cuda'):
+    def from_marks(marks, device='cuda'):
         pcd_size, image_size = marks.shape
         image_size *= 8
-        pcm = PointCloudMark(pcd_size, image_size, device=device,
-                             _marks=torch.tensor(marks, dtype=torch.uint8, device=device))
+        if type(marks)==np.ndarray:
+            _marks = torch.tensor(marks, dtype=torch.uint8, device=device)
+        else:
+            _marks = marks
+        pcm = PointCloudMark(pcd_size, image_size, device=device, _marks=_marks)
+        del _marks
         return pcm
 
     def __getitem__(self, key):
@@ -57,6 +61,7 @@ class PointCloudMark:
         ##
         pt_map = torch.tensor(pt_map, dtype=torch.long, device=self.device)
         self._marks[ pt_map, index ] |= val
+        del pt_map
         pass
 
     def select(self, bit: int, reverse: bool=False) -> torch.Tensor:
