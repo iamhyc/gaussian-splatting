@@ -80,7 +80,7 @@ class SceneCacheManager:
 
     def load_init_pcd(self):
         first_index = self.hit_trace[0]
-        return self.chopped_pcd[first_index]
+        return self.chopped_pcd.pop(first_index)
 
     def concat_cache(self, new_dict: dict):
         if len(self.cache_dict) == 0:
